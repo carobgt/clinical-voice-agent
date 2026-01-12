@@ -14,8 +14,8 @@ class Cleaner:
             {"label": "MEDICATION", "pattern": [{"LOWER": "ibuprofen"}]},
             {"label": "MEDICATION", "pattern": [{"LOWER": "glucophage"}]},
             {"label": "MEDICATION", "pattern": [{"LOWER": "propranolol"}]},
-            {"label": "MEDICATION", "pattern": [{"LOWER": "propanol"}]},
-            {"label": "MEDICATION", "pattern": "pro-pran-o-lol"},
+            # {"label": "MEDICATION", "pattern": [{"LOWER": "propanol"}]},
+            # {"label": "MEDICATION", "pattern": "pro-pran-o-lol"},
             {"label": "MEDICATION", "pattern": [{"LOWER": "paracetamol"}]},
             
             # body parts, illustrative again

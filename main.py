@@ -1,4 +1,4 @@
-from conversation_manager import Cleaner
+from cleaner import Cleaner
 from safety_checker import SafetyChecker
 
 # main orchestrator
@@ -23,7 +23,8 @@ class VoiceAgentBrain:
             self.state[key] = list(set(self.state.get(key, []) + cleaned_output['entities'][key]))
         
         # safety check
-        safety_output = self.safety.check(cleaned_text)  # Fix method call
+        
+        safety_output = self.safety.check(cleaned_text)  
         
         # update state
         self.state['turn_count'] += 1
