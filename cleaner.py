@@ -4,26 +4,35 @@ import spacy
 class Cleaner:
     
     def __init__(self):
-        # ner model loading
+        # NER model loading, using mostly for self-correction logic, tried a clinical one w/ less success
         self.nlp = spacy.load("en_core_web_sm")
         
         # needed to add entity ruler to catch OOD terms
         ruler = self.nlp.add_pipe("entity_ruler", before="ner")
         patterns = [
-            # hard coding here bc not much time, in the future would use NHS A-Z medicines database
+            # hard coding here bc not much time, in the future would use NHS medicines database: https://www.nhs.uk/medicines/
             {"label": "MEDICATION", "pattern": [{"LOWER": "ibuprofen"}]},
             {"label": "MEDICATION", "pattern": [{"LOWER": "glucophage"}]},
             {"label": "MEDICATION", "pattern": [{"LOWER": "propranolol"}]},
-            {"label": "MEDICATION", "pattern": [{"LOWER": "propanol"}]}, #TODO: this is lazy, not a real medication, need to handle better
             {"label": "MEDICATION", "pattern": [{"LOWER": "paracetamol"}]},
             
-            # body parts, illustrative again
+            # body parts, illustrative as well
             {"label": "BODY_PART", "pattern": [{"LOWER": "knee"}]},
+            {"label": "BODY_PART", "pattern": [{"LOWER": "chest"}]},
+            {"label": "BODY_PART", "pattern": [{"LOWER": "neck"}]},
+            {"label": "BODY_PART", "pattern": [{"LOWER": "head"}]},
             {"label": "BODY_PART", "pattern": [{"LOWER": "heart"}]},
+            
+            # some symptoms
+            {"label": "SYMPTOM", "pattern": [{"LOWER": "pain"}]},
+            {"label": "SYMPTOM", "pattern": [{"LOWER": "hurts"}]},
+            {"label": "SYMPTOM", "pattern": [{"LOWER": "fluttery"}]},
+            {"label": "SYMPTOM", "pattern": [{"LOWER": "aches"}]},
+            {"label": "SYMPTOM", "pattern": [{"LOWER": "shakes"}]},
         ]
         ruler.add_patterns(patterns)
     
-    # illustrative list of disfluencies, should cover most
+    # list of disfluencies, should cover most
     disfl = ['um', 'uh', 'er', 'ah', 'like', 'you know', 
     'i mean', 'sort of', 'kind of', 'kinda', 'basically', 'actually']
     
@@ -31,23 +40,18 @@ class Cleaner:
 
     noise_patterns = r'\[(?:noise|inaudible|unclear|cough|pause)\]'
     
-    #TODO: add metada to track what was removed/corrected, important for validation plan
-    # also could add confidence levels for human reviewers s.t. text isnt overprocessed
+    #TODO: could add confidence levels for human reviewers s.t. text isnt overprocessed
+    # i.e. because we remove signs of uncertainty/disfluency which might be useful to track
 
-    
-    # VERSION 2, using ner instead of regex (too brittle)
+    # updated, using NER instead of regex (too brittle) for self-correction logic
+    # also extracting entities here to avoid having to redo this later
     def clean_corrections(self, text):
-        """
-        Handle self-corrections using NER to detect entity replacements.
-        Process the full text to handle corrections that span multiple clauses.
-        """
         corrections = []
         
-        # removing ellipses, dashes, assuming here that they indicate pauses rather than punctuation
+        # removing ellipses, dashes
         text = re.sub(r'\.{2,}', ' ', text)
         text = text.replace('-', '')
         
-        # split into segments around correction markers while keeping context
         doc = self.nlp(text)
         
         # find all entities first
@@ -61,52 +65,90 @@ class Cleaner:
         
         for match in re.finditer(correction_pattern, text, re.IGNORECASE):
             marker_pos = match.end()
-            marker_text = match.group(1).lower()
+            marker_start = match.start()
             
-            # find entities before and after the marker
-            entities_before = [e for e in entities if e.end_char <= match.start()]
+            # find entities after the marker
             entities_after = [e for e in entities if e.start_char >= marker_pos]
             
-            if entities_before and entities_after:
-                # get the last entity before the marker
-                last_before = entities_before[-1]
+            if not entities_after:
+                continue
                 
-                # Find matching entity type after marker
-                for after_ent in entities_after:
-                    # Match by label type
-                    if after_ent.label_ == last_before.label_:
-                        # Skip if the "after" entity is actually the correction marker
-                        if after_ent.text.lower() in self.correction_markers:
-                            continue
-                        
-                        # Record the replacement
-                        before_text = last_before.text
-                        after_text = after_ent.text
-                        
-                        replacements[last_before.start_char] = {
-                            'before': before_text,
-                            'after': after_text,
-                            'end_char': last_before.end_char,
-                            'marker_start': match.start(),
-                            'marker_end': after_ent.end_char
+            after_entity = entities_after[0]
+            
+            # skip if the "after" entity is actually a correction marker word
+            if after_entity.text.lower() in self.correction_markers:
+                continue
+            
+            # determine what to replace
+            before_item = None
+            
+            # try to use the last entity before marker that has the same label as after_entity
+            entities_before = [e for e in entities if e.end_char <= marker_start and e.label_ == after_entity.label_]
+
+            if entities_before:
+                # use the last matching entity
+                last_entity = entities_before[-1]
+                before_item = {
+                    'text': last_entity.text,
+                    'start': last_entity.start_char,
+                    'end': last_entity.end_char,
+                    'type': 'entity'
+                }
+            else:
+                # fall back to token immediately before marker (except for punctuation etc)
+                tokens_before = [token for token in doc if token.idx < marker_start]
+                for token in reversed(tokens_before):
+                    if not token.is_punct and len(token.text) > 1:
+                        before_item = {
+                            'text': token.text,
+                            'start': token.idx,
+                            'end': token.idx + len(token.text),
+                            'type': 'token'
                         }
-                        
-                        corrections.append((before_text, after_text))
-                        break
+                        break  # stop at first valid token
+            
+            if before_item:
+                replacements[before_item['start']] = {
+                    'before': before_item['text'],
+                    'after': after_entity.text,
+                    'before_end': before_item['end'],
+                    'marker_start': marker_start,
+                    'marker_end': after_entity.end_char,
+                    'before_type': before_item['type']
+                }
+            
+                corrections.append((before_item['text'], after_entity.text))
         
         # apply replacements from right to left to maintain positions
         cleaned_text = text
         for pos in sorted(replacements.keys(), reverse=True):
             repl = replacements[pos]
-            # replace from the old entity through the correction marker and old corrected entity
             cleaned_text = (
                 cleaned_text[:pos] + 
                 repl['after'] + 
                 cleaned_text[repl['marker_end']:]
             )
         
-        return cleaned_text, corrections
-    
+        # entity tracking for state based monitoring, relies mostly on entity ruling above
+        doc_corrected = self.nlp(cleaned_text)
+        
+        entities = {
+            'medications': [],
+            'symptoms': [],
+            'body_parts': [],
+        }
+        
+        for ent in doc_corrected.ents:
+            if ent.label_ == "MEDICATION":
+                entities['medications'].append(ent.text)
+            elif ent.label_ in ["SYMPTOM"]:
+                entities['symptoms'].append(ent.text)
+            elif ent.label_ == "BODY_PART":
+                entities['body_parts'].append(ent.text)
+        
+        return cleaned_text, corrections, entities
+
+
     def clean_disfluencies(self, text):
         removed = []
 
@@ -144,33 +186,11 @@ class Cleaner:
         # remove disfluencies first (before corrections to avoid interfering)
         text, metadata['disfluencies_removed'] = self.clean_disfluencies(text)
 
-        # handle self-corrections
-        text, metadata['corrections'] = self.clean_corrections(text)
+        # handle self-corrections and extract entities for state-based monitoring later
+        text, metadata['corrections'], entities = self.clean_corrections(text)
         
         # just in case
         text = self.clean_whitespace(text)
-
-        # tracking entities for state-based monitoring
-        entities = {
-            'medications': [],
-            'symptoms': [],
-            'body parts': [],
-        }
-        
-        #TODO: fix this list, check nhs symptoms/medicines database, bit redundant with NER but clinical model didn't work
-        text_lower = text.lower()
-
-        for med in ['ibuprofen', 'glucophage', 'paracetamol', 'propranolol', 'propanol', 'pro-pran-o-lol']:
-            if med in text_lower:
-                entities['medications'].append(med)
-
-        for symptom in ['pain', 'hurts', 'fluttery', 'ache']:
-            if symptom in text_lower:
-                entities['symptoms'].append(symptom)
-
-        for body in ['head', 'shoulders', 'knees', 'toes', 'knee', 'heart']:
-            if body in text_lower:
-                entities['body parts'].append(body)
 
         return {
             'cleaned_text': text,

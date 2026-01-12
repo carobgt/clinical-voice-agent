@@ -2,7 +2,7 @@ from cleaner import Cleaner
 from safety_checker import SafetyChecker
 
 # main orchestrator
-class VoiceAgentBrain:
+class VoiceAgent:
 
     def __init__(self):
         self.cleaner = Cleaner()
@@ -10,7 +10,7 @@ class VoiceAgentBrain:
         self.state = {
             'symptoms': [],
             'medications': [],
-            'body parts': [],
+            'body_parts': [],
             'turn_count': 0
         }
     
@@ -18,12 +18,12 @@ class VoiceAgentBrain:
 
         cleaned_output = self.cleaner.clean(raw_text)
         cleaned_text = cleaned_output['cleaned_text']
+        metadata = cleaned_output['metadata']
         
-        for key in ['medications', 'symptoms', 'body parts']:
+        for key in ['medications', 'symptoms', 'body_parts']:
             self.state[key] = list(set(self.state.get(key, []) + cleaned_output['entities'][key]))
         
         # safety check
-        
         safety_output = self.safety.check(cleaned_text)  
         
         # update state
@@ -31,16 +31,15 @@ class VoiceAgentBrain:
         
         return {
             'cleaned_text': cleaned_text,
+            'metadata': metadata,
             'safety': safety_output,
             'state': self.state,
-            'should_respond': safety_output['risk_level'] == 'low'
         }
     
-    def reset_state(self):
-        """Reset conversation state"""
+    def reset_state(self): # reset conversation state
         self.state = {
             'symptoms': [],
             'medications': [],
-            'body parts': [],
+            'body_parts': [],
             'turn_count': 0
         }
