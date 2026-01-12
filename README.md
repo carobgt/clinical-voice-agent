@@ -26,7 +26,7 @@ On another note, removing all hesitation markers (`um`, `...`) erases the patien
 
 ### On Self-Correction Logic
 
-This was the trickiest part. The task is ambiguous because:
+This was the trickiest part/what I spent most of my time on. The task is ambiguous because:
 - Correction markers are easy (`no`, `wait`, `actually`)
 - But identifying what's being corrected is hard when it could span multiple words/entities
 
